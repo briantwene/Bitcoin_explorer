@@ -1,8 +1,10 @@
+
+
 use sha2::{Digest, Sha256};
 
 
 use crate::utils::ip_string_to_bytes; // import the function
-use crate::structures::{NetAddr, VersionPayload};
+use crate::structures::{Command, NetAddr, VersionPayload};
 
 
 
@@ -40,7 +42,7 @@ fn serialise_network_address(addr: &NetAddr) -> Result<Vec<u8>, std::net::AddrPa
     Ok(buf)
 }
 
-fn bitcoin_checksum(payload: &[u8]) -> [u8; 4] {
+pub fn bitcoin_checksum(payload: &[u8]) -> [u8; 4] {
     let first_hash = Sha256::digest(payload);
     let second_hash = Sha256::digest(&first_hash);
     let mut checksum = [0u8; 4];
@@ -54,10 +56,10 @@ fn sha256d(payload: &[u8]) -> Vec<u8> {
 
 }
 
-pub fn construct_complete_message(payload: Vec<u8>) -> Vec<u8> {
+pub fn construct_complete_message(command:Command,  payload: Vec<u8>) -> Vec<u8> {
     let mut complete_message = vec![];
     let magic_bytes: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9];
-    let command : [u8; 12] = *b"version\0\0\0\0\0";
+    let command : [u8; 12] = command.as_bytes();
     let payload_len = payload.len() as u32;
     let checksum = bitcoin_checksum(&payload);
 

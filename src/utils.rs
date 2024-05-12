@@ -8,3 +8,5 @@ pub fn ip_string_to_bytes(ip_string: &str) -> Result<Vec<u8>, std::net::AddrPars
     };
     Ok(ip_bytes)
 }
+
+pub const BITCOIN_MAGIC: [u8; 4] = [0xf9, 0xbe, 0xb4, 0xd9];

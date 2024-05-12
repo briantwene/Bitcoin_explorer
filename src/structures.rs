@@ -29,4 +29,22 @@ pub struct NetAddr {
 }
 
 
+pub enum Command {
+    Version,
+    Verack,
+    Pong
+}
+
+
+impl Command {
+    pub fn as_bytes(&self) -> [u8; 12] {
+        match self {
+            Command::Version => *b"version\0\0\0\0\0",
+            Command::Verack => *b"verack\0\0\0\0\0\0",
+            Command::Pong => *b"pong\0\0\0\0\0\0\0\0"
+        }
+    }
+}
+
+
 
