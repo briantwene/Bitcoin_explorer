@@ -32,7 +32,8 @@ pub struct NetAddr {
 pub enum Command {
     Version,
     Verack,
-    Pong
+    Pong,
+    GetData
 }
 
 
@@ -41,7 +42,8 @@ impl Command {
         match self {
             Command::Version => *b"version\0\0\0\0\0",
             Command::Verack => *b"verack\0\0\0\0\0\0",
-            Command::Pong => *b"pong\0\0\0\0\0\0\0\0"
+            Command::Pong => *b"pong\0\0\0\0\0\0\0\0",
+            Command::GetData => *b"getdata\0\0\0\0\0",
         }
     }
 }
