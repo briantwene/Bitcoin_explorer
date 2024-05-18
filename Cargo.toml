@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+chrono = "0.4.38"
 crossterm = "0.27.0"
+hex = "0.4.3"
 rand = "0.8.5"
 ratatui = "0.26.2"
 sha2 = "0.10"

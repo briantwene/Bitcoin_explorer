@@ -1,0 +1,53 @@
+Okay so constructed message, able to connect to the node and preform the handshake
+
+
+next is to be able to read the messages from the buffer continuously,
+
+So read some bytes, check to see if it starts with the magic number
+    - if it does then get the full message and read it
+    - if it isn't then
+
+
+
+
+FOR THE BLOCKS
+1. Get the block hashes as they're coming is
+2. When a user wants more information, would use getdata command with the block hash - here get the info needed
+3. Could get all the previous block
+
+
+
+
+
+
+Should add an error message when connecting
+- Check your DNS settings
+
+STATE
+
+LAYOUT
+
+There is two screens
+
+
+The Main Screen
+
+and the Exiting Screen
+
+
+The main screen divied into three parts
+
+Block list - shows list of blocks as they're coming in - a table when you select a block it will open up its transactions in the transaction list and block info in the block info panel
+
+Transaction list - shows transactions in that block, will be a table
+
+Block info panel - shows information on the block as well as if the has is verified
+
+Key bindings
+
+
+Seems like the whole screen will have to update with the changes there etc....
+
+Exiting screen,
+
+has the question do you want to exit 

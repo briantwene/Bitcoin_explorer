@@ -1,14 +1,12 @@
-
-
 use std::error::Error;
 use std::io::{Cursor, Write};
+use std::sync::mpsc::Sender;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{io::Read, net::TcpStream};
 
-
 use crate::serialisers::{bitcoin_checksum, construct_complete_message, serialise_version_message};
-use crate::structures::{BitcoinMessage, Command, NetAddr, VersionPayload};
-use crate::utils::BITCOIN_MAGIC;
+use crate::structures::{BitcoinMessage, Command, NetAddr, VersionPayload, BlockData, Transaction, TransactionInput, TransactionOutput};
+use crate::utils::{read_bytes, read_u32, read_u64, read_var_bytes, read_var_int, BITCOIN_MAGIC};
 
 pub struct Connection {
     stream: Option<TcpStream>,
@@ -70,7 +68,7 @@ impl Connection {
         let serialized_version_message = match serialise_version_message(&version_message) {
             Ok(message) => message,
             Err(e) => {
-                println!("Failed to serialize version message: {}", e);
+                //println!("Failed to serialize version message: {}", e);
                 return Err("Failed to serialize version message".into());
             }
         };
@@ -102,43 +100,38 @@ impl Connection {
                             payload: payload_buffer,
                         };
 
-                        println!("BitcoinMessage: {:?}", message);
+                        //println!("BitcoinMessage: {:?}", message);
                     }
                     Err(e) => {
-                        println!("Failed to read payload: {}", e);
+                        //println!("Failed to read payload: {}", e);
                         return Err("Failed to read payload".into());
                     }
                 }
             }
             Err(e) => {
-                println!("Failed to read header: {}", e);
+                //println!("Failed to read header: {}", e);
                 return Err("Failed to read header".into());
             }
         }
 
-
-
         let verack_bytes = construct_complete_message(Command::Verack, vec![]);
 
         match stream.write_all(&verack_bytes) {
-            Ok(_) => println!("Verack message sent!"),
+            Ok(_) => {}, //println!("Verack message sent!"),
             Err(e) => {
-                println!("Failed to send verack message: {}", e);
+                //println!("Failed to send verack message: {}", e);
                 return Err("Failed to send verack message".into());
             }
         }
         Ok(())
     }
 
-    pub fn handle_stream(&mut self) -> Result<(), Box<dyn Error>> {
-
+    pub fn handle_stream(&mut self, sender: Sender<BlockData>) -> Result<(), Box<dyn Error>> {
         let stream = match &mut self.stream {
             Some(stream) => stream,
             None => return Err("Not connected to a node".into()),
         };
 
-      
-        
         loop {
             // create buffer
             let mut buffer: Vec<u8> = vec![0; 24];
@@ -152,7 +145,7 @@ impl Connection {
                 let checksum_bytes = &buffer[20..24];
 
                 if magic_bytes == BITCOIN_MAGIC {
-                    println!("Magic number matched");
+                    //println!("Magic number matched");
 
                     let command = String::from_utf8_lossy(command_bytes)
                         .trim_end_matches('\0')
@@ -160,37 +153,46 @@ impl Connection {
                     let length = u32::from_le_bytes(length_bytes.try_into().unwrap());
                     let checksum = u32::from_le_bytes(checksum_bytes.try_into().unwrap());
 
-                    println!("Command: {}", command);
-                    println!("Length: {}", length);
-                    println!("Checksum: {}\n\n", checksum);
+                    //println!("Command: {}", command);
+                    //println!("Length: {}", length);
+                    //println!("Checksum: {}\n\n", checksum);
 
                     let mut payload: Vec<u8> = vec![0; length as usize];
-                    stream.read_exact(&mut payload).unwrap();
-
-                    if command == "ping" {
-                        let nonce = u64::from_le_bytes(payload[0..8].try_into().unwrap());
-                        handle_ping(nonce, stream).unwrap();
-                    } else if command == "inv" {
-                        handle_inv(payload, stream).unwrap();
- 
-                    } else if command == "block" {
-                        handle_block(payload).unwrap()
+                    match stream.read_exact(&mut payload) {
+                        Ok(_) => {
+                            // Continue processing the payload
+                            if command == "ping" {
+                                let nonce = u64::from_le_bytes(payload[0..8].try_into().unwrap());
+                                handle_ping(nonce, stream).unwrap();
+                            } else if command == "inv" {
+                                handle_inv(payload, stream).unwrap();
+                            } else if command == "block" {
+                                handle_block(payload, &sender).unwrap();
+                            }
+                            else if command == "getheaders" {
+                                parse_getheaders(payload, stream).unwrap();
+                            }
+                        },
+                        Err(e) => {
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                                //println!("Reached end of file before expected");
+                                // Handle the error, e.g., by breaking out of the loop or returning an error
+                            } else {
+                                // Propagate the error
+                                return Err(e.into());
+                            }
+                        }
                     }
+                    
                 }
             }
         }
 
         Ok(())
     }
-
-
-
 }
 
-
 fn handle_ping(nonce: u64, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
-
-
     let pong_command = Command::Pong.as_bytes();
     let pong_length = 8u32.to_le_bytes();
     let pong_checksum = bitcoin_checksum(&nonce.to_le_bytes());
@@ -203,71 +205,67 @@ fn handle_ping(nonce: u64, stream: &mut TcpStream) -> Result<(), Box<dyn Error>>
     pong_message.extend_from_slice(&nonce.to_le_bytes());
 
     stream.write_all(&pong_message).unwrap();
-    println!("Sent pong message with nonce {}", nonce);
-
+    //println!("Sent pong message with nonce {}", nonce);
 
     Ok(())
-
 }
 
 fn handle_inv(payload: Vec<u8>, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
-    let first_byte = payload[0];
-    let (count, offset) = match first_byte {
-        value if value < 0xFD => (value as u64, 1),
-        0xFD => (u16::from_le_bytes(payload[1..3].try_into().unwrap()) as u64, 3),
-        0xFE => (u32::from_le_bytes(payload[1..5].try_into().unwrap()) as u64, 5),
-        0xFF => (u64::from_le_bytes(payload[1..9].try_into().unwrap()), 9),
-        _ => return Err("Invalid count".into()),
-    };
+    let count = payload[0] as usize;
+    let mut start = 1;
 
-    println!("Count: {}", count);
+    let mut hashes = Vec::new();
+    let mut inv_types = Vec::new();
 
-    let inv_vectors: Vec<&[u8]> = payload[offset..].chunks(36).collect();
+    for _ in 0..count {
+        let inv_type = u32::from_le_bytes(payload[start..start+4].try_into()?);
+        let hash = &payload[start+4..start+36];
 
-    //println!("Inventory vectors: {:?}", inv_vectors);
-
-    for inv_vector in inv_vectors {
-  
-  
-
-        // Read the type as a 4-byte array
-        let inv_type_bytes = &inv_vector[0..4];
-
-        // Convert the type to a u32
-        let inv_type = u32::from_le_bytes(inv_type_bytes.try_into().unwrap());
-
-        // Check if the type is a block get its hash and then send a getdata message
         if inv_type == 2 {
-            let hash = &inv_vector[4..];
-            println!("Block hash: {:?}", hash);
-            send_getdata(hash, inv_type, stream).unwrap();
+            inv_types.push(inv_type);
+            hashes.push(hash);
         }
+    
+        start += 36;
+    }
+
+
+    // Only call send_getdata if there are blocks to request
+    if !hashes.is_empty() && !inv_types.is_empty() {
+        send_getdata(hashes, inv_types, stream)?;
+    }
+
 
         // Check if the type is a transaction
         // if inv_type == 1 {
         //     let hash = &inv_vector[4..];
-        //     println!("Transaction hash: {:?}", hash);
+        //     //println!("Transaction hash: {:?}", hash);
         // }
-    }
+    
 
     Ok(())
 }
 
-
-fn send_getdata(hash: &[u8], inv_type: u32, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+fn send_getdata(
+    hashes: Vec<&[u8]>,
+    inv_types: Vec<u32>,
+    stream: &mut TcpStream,
+) -> Result<(), Box<dyn Error>> {
     let getdata_command = Command::GetData.as_bytes();
 
     let mut getdata_payload = Vec::new();
 
-    getdata_payload.push(1);
+    // Add the count of inventory vectors to the payload
+    getdata_payload.push(hashes.len() as u8);
 
-    getdata_payload.extend(&inv_type.to_le_bytes());
-
-    getdata_payload.extend(hash);
+    // Add each inventory vector to the payload
+    for (hash, inv_type) in hashes.iter().zip(inv_types.iter()) {
+        getdata_payload.extend(&inv_type.to_le_bytes());
+        getdata_payload.extend(*hash);
+    }
 
     let getdata_length = (getdata_payload.len() as u32).to_le_bytes();
     let getdata_checksum = bitcoin_checksum(&getdata_payload);
-
 
     let mut getdata_message = Vec::new();
     getdata_message.extend_from_slice(&BITCOIN_MAGIC);
@@ -277,12 +275,12 @@ fn send_getdata(hash: &[u8], inv_type: u32, stream: &mut TcpStream) -> Result<()
     getdata_message.extend_from_slice(&getdata_payload);
 
     stream.write_all(&getdata_message).unwrap();
-    println!("Sent getdata message for hash {:?}", hash);
+    //println!("Sent getdata message for hashes {:?}", hashes);
 
     Ok(())
 }
 
-fn handle_block(block: Vec<u8>) -> Result<(), Box<dyn Error>> {
+fn handle_block(block: Vec<u8>, sender: &Sender<BlockData>) -> Result<(), Box<dyn Error>> {
     // The block header is the first 80 bytes of the payload
     let header = &block[0..80];
 
@@ -291,21 +289,116 @@ fn handle_block(block: Vec<u8>) -> Result<(), Box<dyn Error>> {
 
     // Parse the header
     let version = u32::from_le_bytes(header[0..4].try_into().unwrap());
-    let prev_block_hash = &header[4..36];
-    let merkle_root = &header[36..68];
+    let prev_block_hash: [u8; 32] = header[4..36].try_into().unwrap();
+    let merkle_root: [u8; 32] = header[36..68].try_into().unwrap();
     let timestamp = u32::from_le_bytes(header[68..72].try_into().unwrap());
     let bits = u32::from_le_bytes(header[72..76].try_into().unwrap());
     let nonce = u32::from_le_bytes(header[76..80].try_into().unwrap());
 
-    println!("Block header:");
-    println!("Version: {}", version);
-    println!("Previous block hash: {:?}", prev_block_hash);
-    println!("Merkle root: {:?}", merkle_root);
-    println!("Timestamp: {}", timestamp);
-    println!("Bits: {}", bits);
-    println!("Nonce: {}", nonce);
+    //println!("Block header:");
+    //println!("Version: {}", version);
+    //println!("Previous block hash: {:?}", prev_block_hash);
+    //println!("Merkle root: {:?}", merkle_root);
+    //println!("Timestamp: {}", timestamp);
+    //println!("Bits: {}", bits);
+    //println!("Nonce: {}", nonce);
 
-    // TODO: Parse the transactions
+    let parsed_transactions = parse_transactions(transactions)?;
+
+
+    let mut block = BlockData {
+        version,
+        prev_block_hash,
+        merkle_root,
+        timestamp,
+        bits,
+        nonce,
+        block_hash: vec![],
+        transactions: parsed_transactions,
+    };
+
+    sender.send(block).unwrap();
+
+
+
 
     Ok(())
+}
+
+fn parse_getheaders(payload: Vec<u8>, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    let version = u32::from_le_bytes(payload[0..4].try_into()?);
+
+    let (count, offset) = read_var_int(payload[4..].to_vec())?;
+    let mut start = 4 + offset;
+
+    let mut hashes = Vec::new();
+    let mut inv_types = Vec::new();
+
+    for _ in 0..count {
+        let hash = &payload[start..start + 32];
+        hashes.push(hash);
+        inv_types.push(2);  // 2 represents a block
+        start += 32;
+    }
+
+    let hash_stop: [u8; 32] = payload[start..start + 32].try_into()?;
+
+    send_getdata(hashes, inv_types, stream)?;
+
+    // Now you have the version, block_locator_hashes, and hash_stop
+    // You can process them as needed
+
+    Ok(())
+}
+
+
+fn parse_transaction(data: &[u8]) -> Result<Transaction, Box<dyn Error>> {
+    let mut start = 0;
+
+    let version = u32::from_le_bytes(data[start..start + 4].try_into()?);
+    start += 4;
+
+    let input_count = data[start] as usize;
+    start += 1;
+
+    let mut inputs = Vec::new();
+    for _ in 0..input_count {
+        let prev_tx_hash = data[start..start + 32].try_into()?;
+        start += 32;
+
+        let prev_output_index = u32::from_le_bytes(data[start..start + 4].try_into()?);
+        start += 4;
+
+        let script_length = data[start] as usize;
+        start += 1;
+
+        let script_sig = data[start..start + script_length].to_vec();
+        start += script_length;
+
+        let sequence = u32::from_le_bytes(data[start..start + 4].try_into()?);
+        start += 4;
+
+        inputs.push(TransactionInput { prev_tx_hash, prev_output_index, script_sig, sequence });
+    }
+
+    let output_count = data[start] as usize;
+    start += 1;
+
+    let mut outputs = Vec::new();
+    for _ in 0..output_count {
+        let value = u64::from_le_bytes(data[start..start + 8].try_into()?);
+        start += 8;
+
+        let script_length = data[start] as usize;
+        start += 1;
+
+        let script_pub_key = data[start..start + script_length].to_vec();
+        start += script_length;
+
+        outputs.push(TransactionOutput { value, script_pub_key });
+    }
+
+    let locktime = u32::from_le_bytes(data[start..start + 4].try_into()?);
+
+    Ok(Transaction { version, inputs, outputs, locktime })
 }
