@@ -303,7 +303,7 @@ fn handle_block(block: Vec<u8>, sender: &Sender<BlockData>) -> Result<(), Box<dy
     //println!("Bits: {}", bits);
     //println!("Nonce: {}", nonce);
 
-    let parsed_transactions = parse_transactions(transactions)?;
+    let parsed_transactions = parse_transaction(transactions)?;
 
 
     let mut block = BlockData {

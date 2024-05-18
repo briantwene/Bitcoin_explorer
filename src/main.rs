@@ -92,7 +92,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app_state: &mut AppState, rec
                                 let prev_panel = (app_state.selected_panel + 1) % 2; // Assuming you have 2 panels
                                 Action::SetPanel(prev_panel)
                             }
-                            KeyCode::Char('q') => Action::SetScreen(CurrentScreen::Exiting),
+                            KeyCode::Char('q') => Action::SetScreen(CurrentScreen::Exit),
                             _ => Action::DoNothing,
                         };
         
